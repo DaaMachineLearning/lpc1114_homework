@@ -1,0 +1,390 @@
+#include "lpc11xx.h"
+#define  NCS   LPC_GPIO2->DATA|=(1<<0)  // F_CS = 1;高
+#define ECS   LPC_GPIO2->DATA&=~(1<<0)   // F_CS = 0;低
+#define GBK_EN   
+//W25Q16读写
+#define FLASH_ID 0XEF14
+//指令表
+#define W25Q_WriteEnable  0x06 
+#define W25Q_WriteDisable  0x04 
+#define W25Q_ReadStatusReg  0x05 
+#define W25Q_WriteStatusReg  0x01 
+#define W25Q_ReadData  0x03 
+#define W25Q_FastReadData  0x0B 
+#define W25Q_FastReadDual  0x3B 
+#define W25Q_PageProgram  0x02 
+#define W25Q_BlockErase  0xD8 
+#define W25Q_SectorErase  0x20 
+#define W25Q_ChipErase  0xC7 
+#define W25Q_PowerDown  0xB9 
+#define W25Q_ReleasePowerDown  0xAB 
+#define W25Q_DeviceID  0xAB 
+#define W25Q_ManufactDeviceID  0x90 
+#define W25Q_JedecDeviceID  0x9F 
+ void W25Q16_Wait_Busy(void);  //等待空闲
+uint16_t wendu;  
+uint8_t buff[7];
+uint8_t Wdata[7];
+uint8_t Rdata[7];
+uint32_t flashdizhi;
+uint8_t output=0;
+int j;
+/************************ssp*************************
+/* 函数功能：SPI1通信   */
+/* 说明：  发送一个字节，接收一个字节  */
+/*****************************************/
+uint8_t SPI1_communication(uint8_t TxData)
+{  
+  while(((LPC_SSP1->SR)&(1<<4))==(1<<4));//忙时等待,SR状态寄存器bit4 BSY:忙时为1
+  LPC_SSP1->DR = TxData;  //把要发送的数写入TxFIFO
+  while(((LPC_SSP1->SR)&(1<<2))!=(1<<2));//等待接收完,SR状态寄存器bit2 RNE:接收FIFO非空为1
+  return(LPC_SSP1->DR);   //返回收到的数据
+}
+/*****************************************/
+/* 函数功能：SPI0通信   */
+/* 说明：  发送一个字节，接收一个字节  */
+/*****************************************/
+uint8_t SPI0_communication(uint8_t TxData)
+{  
+  while(((LPC_SSP0->SR)&(1<<4))==(1<<4));//忙时等待,SR状态寄存器bit4 BSY:忙时为1
+  LPC_SSP0->DR = TxData;  //把要发送的数写入TxFIFO
+  while(((LPC_SSP0->SR)&(1<<2))!=(1<<2));//等待接收完,SR状态寄存器bit2 RNE:接收FIFO非空为1
+  return(LPC_SSP0->DR);  //返回收到的数据
+}   
+/*****************************************/
+/* 函数功能：SPI1初始化  */
+/* 说明：  没有用SSEL1  */
+/*****************************************/
+void SPI1_Init(void)
+{
+  uint8_t i,Clear=Clear;//Clear=Clear:用这种语句形式解决编译产生的Waring:never used!  
+  LPC_SYSCON->PRESETCTRL |= (0x1<<2);  //禁止LPC_SSP1复位
+  LPC_SYSCON->SYSAHBCLKCTRL |= (0x1<<18);//允许LPC_SSP1时钟 bit18
+  LPC_SYSCON->SSP1CLKDIV = 0x06;  //6分频：48/6=8Mhz
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<16); // 使能IOCON时钟(bit16)
+  LPC_IOCON->PIO2_1 &= ~0x07;
+  LPC_IOCON->PIO2_1 |= 0x02;  //把PIO2_1选择为LPC_SSP CLK 
+  LPC_IOCON->PIO2_2 &= ~0x07;  
+  LPC_IOCON->PIO2_2 |= 0x02;  //把PIO2_2选择为LPC_SSP MISO 
+  LPC_IOCON->PIO2_3 &= ~0x07;  
+  LPC_IOCON->PIO2_3 |= 0x02;  //把PIO2_3选择为LPC_SSP MOSI 
+  LPC_SYSCON->SYSAHBCLKCTRL &= ~(1<<16); // 禁能IOCON时钟(bit16)
+  // 8位数据传输，SPI模式, CPOL = 1, CPHA = 1,空闲时CLK为1，SCR = 0
+  LPC_SSP1->CR0 = 0x01C7;   //1 1100 0111  
+  // 预分频值（注意：这里必须为偶数 2~254） 
+  LPC_SSP1->CPSR = 0x04;
+  LPC_SSP1->CR1 &= ~(1<<0);//LBM=0:正常模式
+  LPC_SSP1->CR1 &= ~(1<<2);//MS=0:主机模式 
+  LPC_SSP1->CR1 |=  (1<<1);//SSE=1:使能SPI1
+  //清空RxFIFO，LPC1114收发均有8帧FIFO,每帧可放置4~16位数据
+  for ( i = 0; i < 8; i++ )
+  {
+  Clear = LPC_SSP1->DR;//读数据寄存器DR将清空RxFIFO
+  }   
+}
+/*****************************************/
+/* 函数功能：SPI0初始化  */
+/* 说明：  没有用SSEL0  */
+/*****************************************/
+void SPI0_Init(void)
+{
+  uint8_t i,Clear=Clear;//Clear=Clear:用这种语句形式解决编译产生的Waring:never used!  
+ 
+  LPC_SYSCON->PRESETCTRL |= (0x1<<0);  //禁止LPC_SSP0复位
+  LPC_SYSCON->SYSAHBCLKCTRL |= (0x1<<11);//允许LPC_SSP0时钟 bit11
+  LPC_SYSCON->SSP0CLKDIV = 0x01;  //分频系数为1，使SPI0速率最大：48Mhz
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<16); // 使能IOCON时钟(bit16)
+  LPC_IOCON->SCK_LOC = 0x02;   //把SCK0复用到PIO0_6引脚
+  LPC_IOCON->PIO0_6 &= ~0x07;
+  LPC_IOCON->PIO0_6 |= 0x02;  //把PIO0_6设置为SSP CLK 
+  LPC_IOCON->PIO0_8 &= ~0x07;  
+  LPC_IOCON->PIO0_8 |= 0x01;  //把PIO0_8设置为SSP MISO 
+  LPC_IOCON->PIO0_9 &= ~0x07;  
+  LPC_IOCON->PIO0_9 |= 0x01;  //把PIO0_9设置为SSP MOSI 
+  LPC_SYSCON->SYSAHBCLKCTRL &= ~(1<<16); // 禁能IOCON时钟(bit16)
+  // 8位数据传输，SPI模式, CPOL = 0, CPHA = 0,空闲时CLK为0，第一个上升沿采集数据，SCR = 0
+  LPC_SSP0->CR0 = 0x0107;  
+  // 预分频值（注意：必须为偶数 2~254） 
+  LPC_SSP0->CPSR = 0x02;
+  LPC_SSP0->CR1 &= ~(1<<0);//LBM=0:正常模式
+  LPC_SSP0->CR1 &= ~(1<<2);//MS=0:主机模式 
+  LPC_SSP0->CR1 |=  (1<<1);//SSE=1:使能SPI0
+  //清空RxFIFO，LPC1114收发均有8帧FIFO,每帧可放置4~16位数据
+  for ( i = 0; i < 8; i++ )
+  {
+  Clear = LPC_SSP0->DR;//读数据寄存器DR将清空RxFIFO
+  }   
+}
+/************************************************/
+/* 函数功能：初始化UART口  */
+/************************************************/
+void UART_Init(uint32_t baudrate)
+{
+  uint32_t DL_value,Clear=Clear;  // (用这种方式定义变量解决编译器的Warning)  
+  
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<16); // 使能IOCON时钟 
+  LPC_IOCON->PIO1_6 &= ~0x07;  
+  LPC_IOCON->PIO1_6 |= 0x01;  //把P1.6脚设置为RXD
+  LPC_IOCON->PIO1_7 &= ~0x07;  
+  LPC_IOCON->PIO1_7 |= 0x01;  //把P1.7脚设置为TXD
+  LPC_SYSCON->SYSAHBCLKCTRL &= ~(1<<16); // 禁能IOCON时钟
+ 
+  LPC_SYSCON->UARTCLKDIV = 0x1;  //时钟分频值为1
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<12);//允许UART时钟
+  LPC_UART->LCR = 0x83;   //8位传输，1个停止位，无几偶校验，允许访问除数锁存器
+  DL_value = SystemCoreClock/16/baudrate ;  //计算该波特率要求的除数锁存寄存器值
+  LPC_UART->DLM = DL_value / 256;  //写除数锁存器高位值  
+  LPC_UART->DLL = DL_value % 256;  //写除数锁存器低位值
+  LPC_UART->LCR = 0x03;  //DLAB置0
+  LPC_UART->FCR = 0x07;  //允许FIFO，清空RxFIFO 和 TxFIFO
+  Clear = LPC_UART->LSR;   //读UART状态寄存器将清空残留状态
+}
+/************************************************/
+/* 函数功能：串口接收字节数据  */
+/************************************************/
+uint8_t UART_receive(void)
+{  
+  while(!(LPC_UART->LSR & (1<<0)));//等待接收到数据
+  return(LPC_UART->RBR);  //读出数据
+}
+/************************************************/
+/* 函数功能：串口发送字节数据  */
+/************************************************/
+void UART_send_byte(uint8_t byte)
+{
+  LPC_UART->THR = byte;
+  while ((LPC_UART->LSR & (1<<5))!=(1<<5));//等待发送完
+}
+/************************************************/
+/* 函数功能：串口发送数组数据  */
+/************************************************/
+void UART_send(uint8_t *Buffer, uint32_t Length)
+{
+  while(Length != 0)
+  {
+  while ( !(LPC_UART->LSR & (1<<5)) );//等待发送完
+  LPC_UART->THR = *Buffer;
+  Buffer++;
+  Length--;
+  }
+}
+/*********************************************W25Q16***********************************************/
+void W25Q16_Init(void)
+{
+//初始化W25Q16的控制IO口
+  LPC_GPIO2->DIR |= (1<<0);  // P2.0为w25q16的选择引脚所连接的IO
+  LPC_GPIO2->DATA |= (1<<0); //
+  SPI1_Init();  //初始化SPI1
+}  
+//读W25Q16状态寄存器  */
+uint8_t W25Q16_ReadSR(void)   
+{  
+  uint8_t byte=0;   
+  ECS;   //选择   
+  SPI1_communication(W25Q_ReadStatusReg);  //发送读取状态寄存器命令  
+  byte=SPI1_communication(0Xff);  //读取一个字节  
+  NCS;  //取消片选  
+  return byte;  //返回8位W25Q16的状态值
+}//写入使能  
+void W25Q16_Write_Enable(void)   
+{
+  ECS;  //使能器件   
+  SPI1_communication(W25Q_WriteEnable);   //发送写使能  
+  NCS;   //取消片选  
+} 
+/***************************************************函数功能：读取W25Q16数据 */ 
+Buffer:读出数据后放到此数组  
+Addr:开始读取的地址(24bit)  
+ByteNum:要读取的字节数(最大65535)  
+****************************************************
+void W25Q16_Read(uint8_t* Buffer,uint32_t Addr,uint16_t ByteNum)   
+{ 
+  uint16_t i;  
+  ECS;   //使能器件   
+  SPI1_communication(W25Q_ReadData);   //发送读取命令   
+  SPI1_communication((uint8_t)((Addr)>>16));  //发送24bit地址  
+  SPI1_communication((uint8_t)((Addr)>>8));   
+  SPI1_communication((uint8_t)Addr);   
+  for(i=0;i<ByteNum;i++)
+  { 
+  Buffer[i]=SPI1_communication(0XFF);   //循环读数  
+  }
+  NCS;  //取消片选  
+}  
+ 
+/***************************************************函数功能：给W25Q16写入一页数据  */
+Buffer:此数组存放将要写入W25Q16的数据   
+Addr:开始写入的地址(24bit)  
+ByteNum:要写入的字节数(最大256)  
+最多写入256个字节，而且不能超过该页的剩余字节数，否则将会覆盖该页前面的数据。  */
+/***************************************************/  
+void W25Q16_Write_Page(uint8_t* Buffer,uint32_t Addr,uint16_t ByteNum)
+{
+  uint16_t i;  
+  W25Q16_Write_Enable();  // 发送写使能命令 
+  ECS;   //使能SPI通信   
+  SPI1_communication(W25Q_PageProgram);  //发送写页命令   
+  SPI1_communication((uint8_t)((Addr)>>16)); //发送24bit地址  
+  SPI1_communication((uint8_t)((Addr)>>8));   
+  SPI1_communication((uint8_t)Addr);   
+  for(i=0;i<ByteNum;i++)SPI1_communication(Buffer[i]);//循环写数  
+  NCS;  // 禁能SPI通信 
+  W25Q16_Wait_Busy();  //等待写入结束
+} 
+函数功能；擦除整片W25Q16   
+/*****************************************************/
+void W25Q16_Erase_Chip(void)   
+{   
+  W25Q16_Write_Enable();  //SET WEL 
+  W25Q16_Wait_Busy();   
+   ECS;  //使能器件   
+  SPI1_communication(W25Q_ChipErase);  //发送片擦除命令  
+  NCS;  //取消片选  
+  W25Q16_Wait_Busy();  //等待芯片擦除结束
+}   
+void W25Q16_Wait_Busy(void)   
+{   
+  while ((W25Q16_ReadSR()&0x01)==0x01);   // 等待BUSY位清空
+}  
+/********I2C*****************************************/
+void I2C_Init(uint8_t Mode)
+{
+  LPC_SYSCON->PRESETCTRL |= (1<<1);   //复位I2C外设  De-asserted I2C 模块（在启动 I2C 模块之前，必须向该位写 1）
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<5);   //使能I2C时钟
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<16);  //使能I/O 配置模块的时钟
+  LPC_IOCON->PIO0_4 &= ~0x3F;  //先清零
+  LPC_IOCON->PIO0_4 |= 0x01;   //选择 I2C 功能 SCL ( 开漏引脚 )
+  LPC_IOCON->PIO0_5 &= ~0x3F;  
+  LPC_IOCON->PIO0_5 |= 0x01;   //选择 I2C 功能 SDA ( 开漏引脚 )
+  
+  LPC_SYSCON->SYSAHBCLKCTRL &= ~(1<<16);   // 低功耗考虑
+  if(Mode == 1)  // 快速模式400KHZ
+  {
+  LPC_I2C->SCLH = 60; 
+  LPC_I2C->SCLL = 65;  
+  }
+  if(Mode == 2)  //I2C快速模式PLUS1MHZ
+  {
+  LPC_I2C->SCLH = 25; 
+  LPC_I2C->SCLL = 25;  
+  }
+  else   // 标准模式100KHZ
+  {
+  LPC_I2C->SCLH = 250; 
+  LPC_I2C->SCLL = 250; 
+  }
+  LPC_I2C->CONCLR = 0xFF;  //清除所有I2C0CONSET寄存器的位
+  LPC_I2C->CONSET |= (1<<6);  // I2EN=1 使能I2C接口 
+}
+//I2C启动子程序（主控发送开始信号）
+void I2C_Start(void)
+{
+  LPC_I2C->CONSET |= (1<<5);  // STA=1 I2C进入主模式并发送一个起始条件
+  while(!(LPC_I2C->CONSET & (1<<3)));  // 当I2C状态改变时，I2C中断标志位3即SI置位
+  LPC_I2C->CONCLR = (1<<5) | (1<<3); // 清零I2C中断位和START标志位
+}
+//I2C停止子程序
+void I2C_Stop(void)
+{
+   LPC_I2C->CONCLR = (1<<3);  //清除 SI标志位
+   LPC_I2C->CONSET |= (1<<4);  //发出停止条件，设置停止标志位
+while( LPC_I2C->CONSET & (1<<4) );  //等待停止标志位被自动清除
+}
+//发送一个字节数据
+void I2C_Send_Byte(uint8_t dat)
+{
+  uint16_t TimeOut;
+   LPC_I2C->DAT=dat;  //包含要发送的数据
+   LPC_I2C->CONCLR = (1<<3);  // 清除中断
+   TimeOut=20000;  //???10000
+   while((!(LPC_I2C->CONSET & (1<<3)))&&(TimeOut--));  
+}
+//接收一个字节数据
+uint8_t I2C_Recieve_Byte(void)
+{
+  uint8_t Rdata;
+  uint16_t TimeOut;
+  LPC_I2C->CONSET = (1<<2);   //AA位置1，在出现特定情况时返回应答信号
+  LPC_I2C->CONCLR = (1<<3);  //中断位清零 
+  TimeOut=20000;
+  while((!(LPC_I2C->CONSET & (1<<3)))&&(TimeOut--));  
+  Rdata = (uint8_t)LPC_I2C->DAT;   //收到的数据  
+  return Rdata;
+}
+/*****************************************TEM******/
+void delay(void)
+{
+  uint16_t i,j;
+  for(i=0;i<1000;i++)
+  for(j=0;j<1000;j++);
+}  
+uint16_t cewen(void)
+{  
+  uint8_t front8bit,after8bit;
+  uint16_t wendu16bit;
+  float T;  
+  I2C_Start();   
+  I2C_Send_Byte(0x91);  
+  front8bit = I2C_Recieve_Byte();   
+  after8bit = I2C_Recieve_Byte(); 
+  wendu16bit = (front8bit <<8)+(after8bit);
+  I2C_Stop();  
+  wendu16bit = wendu16bit >> 5;
+  if(wendu16bit&0x0400)   //10000000000温度采用二进制补码表示
+  T = -(~(wendu16bit&0x03FF)+1)*0.125;
+  else 
+  T = 0.125*(float)wendu16bit;
+  return ((uint16_t)(T*1000));
+}
+void Get_wendu(void)
+{
+  wendu=cewen();
+  buff[0]=wendu/100000+'0';
+  if((wendu/100000)==0)  buff[0]=' ';  
+  buff[1]=wendu/10000%10+'0';
+  buff[2]=wendu/1000%10+'0';
+  buff[3]='.';
+  buff[4]=wendu/100%10+'0';  // 小数点部分
+  buff[5]=wendu/10%10+'0';
+  buff[6]=wendu%10+'0';  
+}
+void TMR32B0_Init(void){   /*32位定时器0初始化*/
+  LPC_SYSCON->SYSAHBCLKCTRL|=(1UL<<9);   //使能
+  LPC_TMR32B0->IR=0x1F;  //中断清0
+  LPC_TMR32B0->PR=9;  //分频9 9+1=10,1s
+  LPC_TMR32B0->MCR=3;  //匹配后复位TC并中断
+  LPC_TMR32B0->MR0=SystemCoreClock/10;  //中断时间0.1s
+  LPC_TMR32B0->TCR=0x01;   //使能定时器
+  NVIC_EnableIRQ(TIMER_32_0_IRQn);  //设置中断并使能
+}
+/*  中断服务子程序函数  */
+/**********************************************/
+void TIMER32_0_IRQHandler(void){  //中断服务子程序
+if(!output&&LPC_UART->RBR=='s'){  //判断输入s开始发送
+  output=1;
+  }
+if((LPC_TMR32B0->IR|=0x01)==1){  //判断MR0是否中断并清零中断
+  Get_wendu(); 
+  if(output){
+  W25Q16_Write_Page(buff,flashdizhi,7) ;   //温度一位一位写入flash
+  W25Q16_Read(Rdata, flashdizhi, 7);  //读出存到Rdata
+  delay();
+  UART_send(Rdata, 7);  //发送数据
+  UART_send("\r\n",2);
+  flashdizhi+=6;
+  }
+   }
+}
+int main()
+{
+  UART_Init(9600);
+  W25Q16_Init();
+  SystemInit();  
+  I2C_Init(1);   
+  flashdizhi = 0x000;   // 从W25Q16第0个扇区第一个字节开始写入数据
+  W25Q16_Erase_Chip() ; //擦除
+  TMR32B0_Init();  //定时器初始化
+  while(1)
+  {
+  }
+}

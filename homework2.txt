@@ -1,0 +1,31 @@
+#include "LPC11xx.h"   /* 引入头文件"LPC11xx.h" */
+extern volatile unsigned char  clock_1s;  /*外部变量声明 */
+/*系统节拍定时器中断处理函数*/
+ 
+void SysTick_Handler (void) {  
+  static unsigned long ticks;  /* 静态无符号长整型变量声明*/
+   if (ticks++ >= 149) {  /*定时10ms，循环150次 */
+  ticks  = 0;  /*初始化赋值变量 ticks  */
+  clock_1s = 1;  /*设置标志 */
+  }
+}  /*中断设置，按照节拍定时器所给的时间进行中断，我们给定10ms执行一次，实现LED闪烁间隔3s */
+/* LED初始化设置 */
+void LED_Init(void) {
+LPC_SYSCON->SYSAHBCLKCTRL |= (1UL << 6); /* GPIO 时钟使能 */
+LPC_GPIO1->DIR |= (1UL << 9); /*将 GPIO1_9 作为输出口*/
+}
+/*状态翻转函数，使用一次后，灯的状态翻转一次 */
+void LED_Toggle(void) {
+LPC_GPIO1->DATA  ^=  (1UL <<9); /* LED 闪烁切换 */
+}
+/*主函数*/
+int main (void) {   /* 主程序开始 */
+  SysTick_Config(SystemCoreClock/100);  /* 定时器10ms定时一次 */
+  LED_Init();  /* LED 初始化 */
+  while (1) {  /* 无限循环，以实现小灯的不停闪烁 */
+  if(clock_1s){  /* clock_1s = 1时，中断执行结束 */
+  clock_1s = 0;  /*标志*/
+  LED_Toggle();  /* 执行LED状态翻转函数 */
+  }
+  }
+}

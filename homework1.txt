@@ -1,0 +1,25 @@
+#include "LPC11xx.h" // 引入LPC11xx芯片的头文件，该文件中定义了LPC11xx的寄存
+void LED_Init(void) {
+LPC_SYSCON->SYSAHBCLKCTRL |= (1UL << 6); // 使能GPIO的时钟，将GPIO所在的AHB总线时钟位设置为1
+LPC_GPIO1->DIR |= (1UL << 9); // 配置GPIO1.9为输出引脚
+}
+void LED_On(void) {
+LPC_GPIO1->DATA &= ~(1UL << 9); // 设置GPIO1.9输出低电平，点亮LED
+}
+void LED_Off(void) {
+LPC_GPIO1->DATA |= (1UL << 9); // 设置GPIO1.9输出高电平，熄灭LED
+}
+void Delay_1s(void){
+int i=SystemCoreClock/5; // 计算循环次数，延时1秒
+while(--i); // 进行延时
+}
+int main (void) {
+LED_Init(); // 初始化LED
+while (1) {
+LED_On(); // 点亮LED
+Delay_1s(); // 延时1秒
+LED_Off(); // 熄灭LED
+Delay_1s(); // 延时1秒
+}
+return 0;
+}

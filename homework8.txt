@@ -1,0 +1,86 @@
+#include "LPC11xx.h" /* LPC11xx definitions        */
+ 
+/*-----------------------------------------------------------------------------
+    The Subfunction
+    *----------------------------------------------------------------------------*/
+uint32_t regVal;
+uint32_t ADC0_Value;
+void UART_init(void) /* Init the UART function */
+{
+    LPC_SYSCON->SYSAHBCLKCTRL|=((1UL<<6)|(1UL<<16)); //使能IOCON时钟
+    LPC_IOCON->PIO1_6=(1UL<<0); /* Definit P1.6 as RxD */
+    LPC_IOCON->PIO1_7=(1UL<<0);/* Definit P1.7 as TxD */
+    LPC_SYSCON->SYSAHBCLKCTRL|=(1UL<<12);//´打开串口时钟，配置完串口也不要关闭，因为串口工作需要时钟
+    LPC_SYSCON->UARTCLKDIV=(4UL<<0); /* UART clock = CCLK/4 */
+    LPC_UART->LCR=0x83; // 配置U0LCR寄存器，8位传输，1个停止位，无奇偶校验，允许访问除数锁存器
+    LPC_UART->DLL=4;   /* 115200 Baud Rate @ 12.0MHz PCLK */
+    LPC_UART->FDR=0x85;  /* FR=1.627,DIVADVAL=5,MULVAL=8 */
+    LPC_UART->DLM=0;  /* High divisor latch=0 */
+LPC_UART->LCR=0x03;  //DLAB置0 
+  LPC_UART->IER=0x01;  //启用 UART 中断功能
+    LPC_UART->FCR=0x81;  //将接收缓冲区长度设置为 8B
+    NVIC_EnableIRQ(UART_IRQn);  //定义中断功能
+}
+void UART_SendBytes(uint32_t data16send)    //通过搜索 U0LSR 发送数据
+{
+    LPC_UART->THR=data16send;    //将发送数据放入 THR
+    while((LPC_UART->LSR&0x40)==0);                 }
+ 
+void TIM16B0_MAT_Init(uint16_t a){
+ LPC_SYSCON->SYSAHBCLKCTRL|=(1<<7); // 使能定时器0时钟
+ 
+LPC_IOCON->PIO0_8=0x02; /配置PIO0_8为定时器16B0的MAT0功能 LPC_TMR16B0->TCR=0x02; 设置定时器16B0为复位状态 LPC_TMR16B0->PR=SystemCoreClock/1000-1; // 设置定时器分频，以1毫秒为基准 LPC_TMR16B0->MR0=a; // 设置定时器MAT0的值 LPC_TMR16B0->IR=0x01; // 清除中断标志 LPC_TMR16B0->MCR=0x02; // 当计数器与MAT0匹配时，产生中断 
+LPC_TMR16B0->EMR=0x31; // 定时器16B0的MAT0输出翻转模式
+ LPC_TMR16B0->TCR=0x01; // 启动计时器 
+ 
+}
+void ADC_Init(void)
+{
+    // 使能 ADC 和 IOCON 外设的时钟
+    LPC_SYSCON->SYSAHBCLKCTRL |= ((1UL<<6) | (1UL<<16));
+    // 上电 ADC 模块
+    LPC_SYSCON->PDRUNCFG &= ~(1UL<<4);
+    // 使能 ADC 外设的时钟
+    LPC_SYSCON->SYSAHBCLKCTRL |= (1UL<<13);
+    // 配置 P0.11 引脚为 ADC 输入
+LPC_IOCON->R_PIO0_11 |= 0x82; // 选择 ADC 功能并禁用上拉电阻
+LPC_IOCON->R_PIO0_11 |= 0x02; // 将引脚设置为 AD0
+ LPC_IOCON->R_PIO0_11 &= ~(1UL<<7); // 配置引脚为模拟输入模式
+ // 配置 ADC 控制寄存器
+ LPC_ADC->CR = (1UL<<0) | (23UL<<8) | (1UL<<25) | (1UL<<26) | (1UL<<27
+// 使能 ADC 转换完成中断
+ LPC_ADC->INTEN = (1UL<<0);
+ // 使能 ADC 转换完成中断的 NVIC 中断向量
+NVIC_EnableIRQ(ADC_IRQn);
+ // 初始化定时器 16B0，用于控制 ADC 转换频率
+TIM16B0_MAT_Init(500);
+}
+void ADC_IRQHandler(void)
+{
+    // 读取 ADC 状态寄存器
+    regVal = LPC_ADC->STAT;
+ 
+    // 读取 ADC 数据寄存器，获取 ADC 转换结果
+    regVal = LPC_ADC->DR[0];
+ 
+    // 提取 ADC 转换结果的有效数据，并保存到 ADC0_Value 变量中
+    ADC0_Value = (regVal >> 6) & 0x3ff;
+ 
+    // 将 ADC 转换结果转换为电压值（单位：伏特），并发送到串口
+    regVal = (ADC0_Value * 3.3) / 1024;
+    UART_SendBytes(regVal >> 8); // 发送高字节
+    UART_SendBytes(regVal);     // 发送低字节
+}
+void delay(void)//一个自动生成的延时函数
+{
+    uint16_t i,j;
+    for(j=0;j<5000;j++)
+        for(i=0;i<500;i++);
+}
+int main (void) {  /* Main Program */
+    UART_init();  /* Init the UART function */
+    ADC_Init();
+    delay();
+  while(1){
+    }
+}

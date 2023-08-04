@@ -1,0 +1,262 @@
+#include "lpc11xx.h"
+/* I2C 控制寄存器 */  
+#define I2CONSET_AA   (1<<2)  // 是否产生应答信号允许位，即是否设置为从机模式
+#define I2CONSET_SI   (1<<3)  // I2C中断标志位
+#define I2CONSET_STO  (1<<4)  // 停止标志位
+#define I2CONSET_STA  (1<<5)  // 开始标志位
+#define I2CONSET_I2EN  (1<<6)  // I2C接口允许位
+/* I2C “清控制寄存器位”寄存器 */
+#define I2CONCLR_AAC  (1<<2)   // 清应答信号允许位
+#define I2CONCLR_SIC  (1<<3)  // 清I2C中断标志位
+#define I2CONCLR_STAC  (1<<5)  // 清开始标志位
+#define I2CONCLR_I2ENC  (1<<6)  // 清I2C接口允许位
+void TMR32B0_Init(void){  /*32位定时器0初始化*/
+  LPC_SYSCON->SYSAHBCLKCTRL|=(1UL<<9);   //使能
+  LPC_TMR32B0->IR=0x1F;  //中断清0
+  LPC_TMR32B0->PR=9;  //分频9 9+1=10,1s
+  LPC_TMR32B0->MCR=3;  //匹配后复位TC并中断
+  LPC_TMR32B0->MR0=SystemCoreClock/10;  //中断时间0.1s
+  LPC_TMR32B0->TCR=0x01;   //使能定时器
+  NVIC_EnableIRQ(TIMER_32_0_IRQn);  //设置中断并使能
+}
+void UART_init(uint32_t baudrate)
+{
+  uint32_t DL_value,Clear=Clear;   // (用这种方式定义变量解决编译器的Warning)  
+  
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<16);   // 使能IOCON时钟 
+  LPC_IOCON->PIO1_6 &= ~0x07;  
+  LPC_IOCON->PIO1_6 |= 0x01;   //把P1.6脚设置为RXD
+  LPC_IOCON->PIO1_7 &= ~0x07;  
+  LPC_IOCON->PIO1_7 |= 0x01;   //把P1.7脚设置为TXD
+  LPC_SYSCON->SYSAHBCLKCTRL &= ~(1<<16);  // 禁能IOCON时钟
+  LPC_SYSCON->UARTCLKDIV = 0x1;  //时钟分频值为1
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<12);   //允许UART时钟
+  LPC_UART->LCR = 0x83;   //8位传输，1个停止位，无几偶校验，允许访问除数锁存器
+  DL_value = SystemCoreClock/16/baudrate ;  //计算该波特率要求的除数锁存寄存器值
+  LPC_UART->DLM = DL_value / 256;  //写除数锁存器高位值  
+  LPC_UART->DLL = DL_value % 256;   //写除数锁存器低位值
+  LPC_UART->LCR = 0x03;   //DLAB置0
+  LPC_UART->FCR = 0x07;   //允许FIFO，清空RxFIFO 和 TxFIFO
+  Clear = LPC_UART->LSR;  //读UART状态寄存器将清空残留状态
+}
+/************************************************/
+/* 函数功能：串口接收字节数据  */
+/************************************************/
+uint8_t UART_recive(void)
+{  
+  while(!(LPC_UART->LSR & (1<<0)));   //等待接收到数据
+  return(LPC_UART->RBR);   //读出数据
+}
+/************************************************/
+/* 函数功能：串口发送字节数据  */
+/************************************************/
+void UART_send_byte(uint8_t byte)
+{
+  while ( !(LPC_UART->LSR & (1<<5)) );//等待发送完
+  LPC_UART->THR = byte;
+}
+/************************************************/
+/* 函数功能：串口发送数组数据  */
+/************************************************/
+void UART_send(uint8_t *Buffer, uint32_t Length)
+{
+  while(Length != 0)
+  {
+  while ( !(LPC_UART->LSR & (1<<5)) );//等待发送完
+  LPC_UART->THR = *Buffer;
+  Buffer++;
+  Length--;
+  }
+}
+void I2C_Init(uint8_t Mode)
+{
+  LPC_SYSCON->PRESETCTRL |= (1<<1);   //使I2C上电 I2C模块（在启动I2C模块之前，必须向该位写1）
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<5);   //使能I2C时钟
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1<<16);   // 使能IOCON时钟
+  LPC_IOCON->PIO0_4 &= ~0x3F;  
+  LPC_IOCON->PIO0_4 |= 0x01;   //把P0.4脚配置为 I2C SCL 
+  LPC_IOCON->PIO0_5 &= ~0x3F;  
+  LPC_IOCON->PIO0_5 |= 0x01;   //把P0.5脚配置为 I2C SDA 
+  
+  LPC_SYSCON->SYSAHBCLKCTRL &= ~(1<<16);   // 禁能IOCON时钟 
+  if(Mode == 1)  // 快速I2C通信 (大约400KHz传输速率)
+  {
+  LPC_I2C->SCLH = 60; 
+  LPC_I2C->SCLL = 65;  
+  }
+  if(Mode == 2)  //快速+I2C通信 (大约1M传输速率)
+  {
+  LPC_I2C->SCLH = 25; 
+  LPC_I2C->SCLL = 25;  
+  }
+  else   // 低速I2C通信 (大约100KHz传输速率)
+  {
+  LPC_I2C->SCLH = 250; 
+  LPC_I2C->SCLL = 250; 
+  }
+  LPC_I2C->CONCLR = 0xFF;  // 清所有标志(CONCLR的置1操作的)
+  LPC_I2C->CONSET |= I2CONSET_I2EN;  // 使能I2C接口
+}
+/***************************************************
+/* 函数功能：发送开始信号  */
+/***************************************************
+void I2C_Start(void)
+{
+  LPC_I2C->CONSET |= I2CONSET_STA;  // 使能发送开始信号
+  while(!(LPC_I2C->CONSET & I2CONSET_SI));  // 等待开始信号发送完成
+  LPC_I2C->CONCLR = I2CONCLR_STAC | I2CONCLR_SIC; // 清除开始START位和SI位 
+}
+/***************************************************/
+/* 函数功能：发送停止信号  */
+/***************************************************/
+void I2C_Stop(void)
+{
+   LPC_I2C->CONCLR = I2CONCLR_SIC;  // 清SI标志位
+   LPC_I2C->CONSET |= I2CONSET_STO;  // 发送停止信号
+while( LPC_I2C->CONSET & I2CONSET_STO );  // 等待停止信号发送完成 
+}
+/****************************************************/
+/* 函数功能：I2C发送一字节数据  */
+/* 入口参数：dat : 要发送的字节  */
+/***************************************************/
+void I2C_Send_Byte(uint8_t dat)
+{
+  uint16_t TimeOut;
+   LPC_I2C->DAT = dat;  // 把字节写入DAT寄存器
+   LPC_I2C->CONCLR = I2CONSET_SI;  // 清除SI标志(1<<3)
+TimeOut=20000;//或延时10000
+   while((!(LPC_I2C->CONSET & I2CONSET_SI))&&(TimeOut--));  // 等待数据发送完成
+}
+/***************************************************/
+/* 函数功能：I2C接收一字节数据  */
+/* 入口参数：rebyte : 要接收的字节  */
+/***************************************************/
+uint8_t I2C_Recieve_Byte(void)
+{
+  uint8_t rebyte;
+  uint16_t TimeOut;
+  
+  LPC_I2C->CONCLR = I2CONCLR_AAC | I2CONCLR_SIC;   // 清AA和SI标志
+  TimeOut=20000;
+  while((!(LPC_I2C->CONSET & I2CONSET_SI))&&(TimeOut--));  // 等待接收数据完成
+  rebyte = (uint8_t)LPC_I2C->DAT;  // 把接收到的数据给了rebyte
+  return rebyte;
+}
+/****************************************************/
+/* 函数功能：I2C发送命令数据  */
+/* 入口参数：Ctrl : 命令+地址字节   */
+/* 出口参数：0：成功  */
+/*  1: 失败  */
+/***************************************************/
+uint8_t I2C_Send_Ctrl(uint8_t CtrlAndAddr)
+{
+  uint8_t res;
+  uint16_t TimeOut;
+ 
+  if(CtrlAndAddr & 0x01)  // 如果是读命令
+  res = 0x40;  // 40H代表开始信号和读命令已经传输完毕，并且已经接收到ACK
+  else  // 如果是写命令
+  res = 0x18;  // 18H代表开始信号和写命令已经传输完毕，并且已经接收到ACK
+  // 发送开始信号
+  LPC_I2C->CONCLR = 0xFF;  // 清所有标志位
+  LPC_I2C->CONSET |= I2CONSET_I2EN | I2CONSET_STA;   // 使能发送开始信号
+  TimeOut=20000;
+  while((!(LPC_I2C->CONSET & I2CONSET_SI))&&(TimeOut--));   // 等待开始信号发送完成
+  // 发送命令+地址字节
+  LPC_I2C->DAT = CtrlAndAddr;  // 把要发送的字节给了DAT寄存器
+  LPC_I2C->CONCLR = I2CONCLR_STAC | I2CONCLR_SIC;  // 清除开始START位和SI位 
+  TimeOut=20000;
+  while((!(LPC_I2C->CONSET & I2CONSET_SI))&&(TimeOut--));  // 等待数据发送完成
+  if(LPC_I2C->STAT != res)  // 观察STAT寄存器响应的状态，判断是否正确执行读或写命令
+  {
+  I2C_Stop();  // 没有完成任务，发送停止信号，结束I2C通信
+  return 1;  // 返回1，表明失败！
+  }
+  return 0;  // 如果正确执行返回0
+}
+/**********************************************/
+/*  温度传感器LM75BD的数据读取函数  */
+/**********************************************/
+uint16_t Temputerature_Test(void)
+{  
+  uint16_t Temputerature_8,Temputerature_16;  //温度值，1次接收8位
+  float Temputerature;   //存储获得的温度值
+  //IIC启动---默认配置温度模式
+  I2C_Start();
+  //发送(0x91)1001 0001：1001,硬件布线； 0001，从机地址--000   读模式--1
+  I2C_Send_Byte(0x91);
+  Temputerature_8 = I2C_Recieve_Byte();//读LM75BD温度寄存器的高八位数据   
+  Temputerature_16 = (Temputerature_8 <<8)+(I2C_Recieve_Byte());
+// IIC停止
+  I2C_Stop();  
+//取温度数字量
+  Temputerature_16 = Temputerature_16 >> 5;//1LSB=0.125℃---低五位为无效数据(移出)
+  /* Temputerature_16:温度寄存器的数据D0--D10:其中D10为温度的正负数据*/
+  //负温度
+  if(Temputerature_16&0x0400)
+  Temputerature = -(~(Temputerature_16&0x03FF)+1)*0.125;//负温度的数据的转换(二进制的补码+1)
+  //正温度
+  else 
+  Temputerature = 0.125*(float)Temputerature_16;
+  //返回温度值 1LSB=0.01℃
+  return ((uint16_t)(Temputerature*100));//返回的温度数据扩大了100倍便于读出小数部分；
+}
+uint8_t rec_buf;   //串口接收数据
+uint16_t temp;  //获的温度传感器LM75BD的数据
+uint8_t buf[6]={0+'0',1+'0',0+'0'};  //初始值--测试串口发送数据
+/**********************************************/
+/*  软件延时函数  */
+/**********************************************/
+void delay(void)
+{
+  uint16_t i,j;
+  for(i=0;i<500;i++)
+  for(j=0;j<1000;j++);
+}
+ 
+/**********************************************/
+/*  获得温度传感器LM75BD的数据  */
+/**********************************************/
+void Get_temprature(void)
+{
+  temp=Temputerature_Test();
+  buf[0]=temp/10000+'0';
+  if((temp/10000)==0)  buf[0]=' ';  // 数据读取习惯--去除前面的0
+  buf[1]=temp/1000%10+'0';
+  buf[2]=temp/100%10+'0';
+  buf[3]='.';
+  buf[4]=temp/10%10+'0';  // 小数部分
+  buf[5]=temp%10+'0';
+}
+/**********************************************/
+/*  中断服务子程序函数  */
+/**********************************************/
+void TIMER32_0_IRQHandler(void){  //中断服务子程序
+  if((LPC_TMR32B0->IR|=0x01)==1){  //判断MR0是否中断并清零中断
+  Get_temprature();  // 获得温度数据
+  UART_send((uint8_t*)"Current Temperature is:",23);  // 串口发送字符串数组
+  UART_send(buf,6);
+  UART_send_byte('C');  // 单位:摄氏度
+  UART_send((uint8_t*)"\r\n",2);
+  }
+}
+/**********************************************/
+/*   主函数  */
+/**********************************************/
+int main()
+{
+  SystemInit();   // 系统时钟初始化 
+  I2C_Init(1);  // IIC初始化--模式:快速+I2C通信 
+  UART_init(9600);  // 把串口波特率配置为9600
+  delay();  // 初始化延时----等待相关器件配置完成
+  //串口测试正常  
+  UART_send((uint8_t*)"UART is ok!\r\n", 13);  // 串口发送字符串数组
+  UART_send((uint8_t*)"UART Test Data:", 15);
+  UART_send(buf,3);  
+  UART_send((uint8_t*)"\r\n",2);
+  Temputerature_Test();  //进行一次读取(过滤第一个数据)--第一次读取的数据温度不准确
+  TMR32B0_Init();  //中断子程序
+  while(1)
+  {
+  }
+}

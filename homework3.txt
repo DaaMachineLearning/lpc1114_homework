@@ -1,0 +1,152 @@
+#include "LPC11xx.h" /* LPC11xx definitions  */
+/* Followling definitions are associated with function */
+#define CLOCK_SETUP  1
+#define SYSOSCCTRL_Val  0x00000000  // Reset: 0x000
+#define WDTOSCCTRL_Val  0x00000000  // Reset: 0x000
+#define SYSPLLCTRL_Val  0x00000023  // Reset: 0x000
+#define SYSPLLCTRL24_Val   0x00000041   // M=2,P=4
+#define SYSPLLCLKSEL_Val   0x00000001  // Reset: 0x000
+#define MAINCLKSEL_Val  0x00000003  // Reset: 0x000
+#define SYSAHBCLKDIV_Val  0x00000001  // Reset: 0x001
+volatile unsigned char clock_1s;  /* Blink symble when 1 to blink */
+uint32_t d=10;
+uint8_tb=1;  /* Frequency symble when 1 is 48MHz*/
+uint32_ts=999;  /* The interrupt cycles */
+/*----------------------------------------------------------------------------
+  The Subfunction
+*----------------------------------------------------------------------------*/
+void LED_Init(void) {
+  LPC_SYSCON->SYSAHBCLKCTRL |= (1UL << 6); /*enable clock for GPIO*/
+  LPC_GPIO1->DIR |= (1UL << 9); /*configure GPIO1_9 as output*/
+  LPC_GPIO2->DIR |= (1UL << 9);/*configure GPIO2_9 as output*/
+  LPC_GPIO2->DIR |= (1UL << 8);/*configure GPIO2_8 as output*/
+  LPC_GPIO2->DATA &=  ~(1UL <<9);/*turn on red1_9*/
+  LPC_GPIO2->DATA |= (1UL << 8);/*turn off green1_8*/
+}
+void Key_Init(void){
+  LPC_GPIO0->DIR &=~(1UL<<1); /*configure GPIO0_1 as input*/
+  LPC_GPIO1->DIR &=~(1UL<<4); /*configure GPIO1_4 as intput*/
+  LPC_GPIO1->DIR &=~(1UL<<8); /*configure GPIO1_8 as intput*/
+  LPC_IOCON->PIO0_1 &= ~0x07; 
+  LPC_IOCON->PIO0_1 |= 0x00; /*configure PIO0_1 as GPIO*/
+  LPC_IOCON->PIO1_4 &= ~0x07;
+  LPC_IOCON->PIO1_4 |= 0x00;/*configure PIO1_4 as GPIO*/
+  LPC_IOCON->PIO1_8 &= ~0x07;
+  LPC_IOCON->PIO1_8 |= 0x00;/*configure PIO1_8 as GPIO*/
+  LPC_GPIO0->IEV &=~(1UL<<1); /*falling edge trigger*/
+  LPC_GPIO0->IE  |=(1UL<<1); /*Open GPIO0_1 interrupt function*/
+  LPC_GPIO1->IEV &=~(1UL<<4); /*falling edge trigger*/
+  LPC_GPIO1->IE  |=(1UL<<4); /*Open GPIO1_4 interrupt function*/
+  LPC_GPIO1->IEV &=~(1UL<<8); /*falling edge trigger*/
+  LPC_GPIO1->IE  |=(1UL<<8); /*Open GPIO1_8 interrupt function*/
+  NVIC_EnableIRQ(EINT0_IRQn); /*Use CMSIS P0 inner function*/
+  NVIC_EnableIRQ(EINT1_IRQn); /*Use CMSIS P1 inner function*/
+}
+void LED_Toggle(void) {
+  LPC_GPIO1->DATA  ^=  (1UL <<9); /* Toggle the  BLINKY LED */
+}
+void SystemInit24 (void) {  /* Change the system frequency to 24MHz */
+  volatile uint32_t i;
+#if (CLOCK_SETUP)   /* Clock Setup  */
+#if ((SYSPLLCLKSEL_Val & 0x03) == 1)
+  LPC_SYSCON->PDRUNCFG  &= ~(1 << 5);  /* Power-up System Osc   */
+  LPC_SYSCON->SYSOSCCTRL  = SYSOSCCTRL_Val;
+  for (i = 0; i < 200; i++) __NOP();
+#endif
+  LPC_SYSCON->SYSPLLCLKSEL  = SYSPLLCLKSEL_Val;   /* Select PLL Input   */
+  LPC_SYSCON->SYSPLLCLKUEN= 0x01;  /* Update Clock Source   */
+  LPC_SYSCON->SYSPLLCLKUEN  = 0x00;  /* Toggle Update Register   */
+  LPC_SYSCON->SYSPLLCLKUEN  = 0x01;
+  while (!(LPC_SYSCON->SYSPLLCLKUEN & 0x01));  /* Wait Until Updated  */
+#if ((MAINCLKSEL_Val & 0x03) == 3)   /* Main Clock is PLL Out  */
+  LPC_SYSCON->SYSPLLCTRL  = SYSPLLCTRL24_Val;   /* SYSPLLCTRL24_Val   0x00000041  0100 0001 M=2,10 P=4*/
+  LPC_SYSCON->PDRUNCFG  &= ~(1 << 7);  /* Power-up SYSPLL  */
+  while (!(LPC_SYSCON->SYSPLLSTAT & 0x01));  /* Wait Until PLL Locked  */
+#endif
+#if (((MAINCLKSEL_Val & 0x03) == 2) )
+  LPC_SYSCON->WDTOSCCTRL  = WDTOSCCTRL_Val;
+  LPC_SYSCON->PDRUNCFG  &= ~(1 << 6);  /* Power-up WDT Clock  */
+  for (i = 0; i < 200; i++) __NOP();
+#endif
+  LPC_SYSCON->MAINCLKSEL  = MAINCLKSEL_Val;  /* Select PLL Clock Output  */
+  LPC_SYSCON->MAINCLKUEN  = 0x01;  /* Update MCLK Clock Source */
+  LPC_SYSCON->MAINCLKUEN  = 0x00;  /* Toggle Update Register   */
+  LPC_SYSCON->MAINCLKUEN  = 0x01;
+  while (!(LPC_SYSCON->MAINCLKUEN & 0x01));  /* Wait Until Updated  */
+  LPC_SYSCON->SYSAHBCLKDIV  = SYSAHBCLKDIV_Val;
+#endif
+}
+void SysTick_Handler(void){
+  static unsigned long ticks;
+  if(ticks++ >=s){   /*Set Clocks to 1 every (s+1)ms*/
+  ticks = 0;
+  clock_1s = 1
+  }
+ 
+void CutShiver(uint32_t t) /* Eliminate the key jitter */
+{while(t--) ;
+}
+void PIOINT0_IRQHandler(void){  /* The interrupt tiggering event of P0 */
+  if((LPC_GPIO0->DATA&(1<<1))==0)  /* Determine whether GPIO0_1 is pressed */
+  {
+  CutShiver(0xff);   /* Eliminate the key jitter */
+  if((LPC_GPIO0->DATA&(1<<1))==0)  /* Prevent misjudgment */
+  {
+ while((LPC_GPIO0->DATA&(1<<1))==0);  /*waiting for release key*/
+  if(b==1)   /* Determine the current system frequency */
+ {LPC_GPIO2->DATA |=  (1UL <<9);   /*turn off red*/
+LPC_GPIO2->DATA &= ~ (1UL <<8);  /*turn on green*/
+ SystemInit24();  /* Change the system frequency to 24MHz */
+SystemCoreClockUpdate();   /* Update the core clock */
+ b=0;  /* Change the frequency symble */
+LPC_GPIO0->IC |=(1<<1);   /*Clear the interrupt*/
+}
+lse
+{
+LPC_GPIO2->DATA|=  (1UL <<8);  /*turn off green*/
+LPC_GPIO2->DATA &=  ~(1UL <<9);   /*turn on red*/
+ SystemInit();  /* Change the system frequency to 48MHz */
+ SystemCoreClockUpdate();  /* Update the core clock */
+ b=1;  /* Change the frequency symble */
+ LPC_GPIO0->IC |=(1<<1);  /*Clear the interrupt*/
+   }
+  }
+  } 
+  }
+void PIOINT1_IRQHandler(void){   /* The interrupt tiggering event of P1 */
+  if((LPC_GPIO1->DATA&(1<<4))!=(1<<4))  /* Determine whether GPIO1_4 is pressed */
+  { CutShiver(0xff);  /* Eliminate the key jitter */
+  if((LPC_GPIO1->DATA&(1<<4))!=(1<<4))   /* Prevent misjudgment */
+  {while((LPC_GPIO1->DATA&(1<<4))==0);  /*waiting for release key*/
+   if(d<20)
+   d=d+1;
+ s=d*100-1;  /* Add 100ms to the delay */
+ LPC_GPIO1->IC |= (1<<4);  /*Clear the interrupt*/
+  }
+  }
+  else if((LPC_GPIO1->DATA&(1<<8))!=(1<<8))  /* Determine whether GPIO1_8 is pressed */
+{CutShiver(0xff);/* Eliminate the key jitter */
+  if((LPC_GPIO1->DATA&(1<<8))!=(1<<8))  /* Prevent misjudgment */
+  {while((LPC_GPIO1->DATA&(1<<8))==0);  /*waiting for release key*/
+   if(d>1)
+   d=d-1;
+   s=d*100-1;  /* Reduce 100ms to the delay */
+   LPC_GPIO1->IC |= (1<<8);   /*Clear the interrupt*/
+  }
+  }
+}
+/*----------------------------------------------------------------------------
+  MAIN function
+*----------------------------------------------------------------------------*/
+int main (void) {   /* Main Program */
+  LED_Init();  /*LED gpio init*/
+  Key_Init();/*KEY gpio init*/
+  SystemInit();  /*Init system frequence to the 48MHz*/
+  SysTick_Config(SystemCoreClock/1000);  /*Generate an interruption every 1ms*/
+  while(1){
+  if(clock_1s)
+  {clock_1s=0;/* Reload the blink symble */
+  LED_Toggle();  /* Toggle the BLINKY LED */
+  } 
+  }
+}

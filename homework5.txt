@@ -1,0 +1,131 @@
+第一题程序
+#include "LPC11xx.h" /* LPC11xx definitions  */
+int i=0;
+uint8_t test=0x55;//发送数据
+char wro[5]="error";//若输入其他则返回错误
+uint8_t data[8];//接收缓冲区
+void UART_init(void)
+{
+LPC_SYSCON->SYSAHBCLKCTRL|=((1UL<<6)|(1UL<<16));//使能IOCON时钟：SYSAHBCLKCTRL寄存器的16位为IO配置块时钟使能位
+  LPC_IOCON->PIO1_6=(1UL<<0);//IOCON->PIO1_6寄存器的2:0位为001则将P1.6设置为RXD
+  LPC_IOCON->PIO1_7=(1UL<<0); //IOCON->PIO1_7寄存器的2:0位为001则将P1.7设置为TXD
+  LPC_SYSCON->SYSAHBCLKCTRL|=(1UL<<12);//使能UART时钟
+  LPC_SYSCON->UARTCLKDIV=(4UL<<0);//时钟分频值为4：，则时钟为12MHZ 波特率=【12000000/（16*4）】*【8/（8+5）】=11538
+  LPC_UART->LCR=0x83;//UART线控制寄存器，0x83对应10000011  故8位传输，1个停止位，无奇偶校验，使能对除数锁存器的访问
+  LPC_UART->DLL=4;//写除数锁存器低位值
+  LPC_UART->FDR=0x85;//1000 0101 8，5 FR=0.615
+  LPC_UART->DLM=0;//写除数锁存器高位值,如果该寄存器前四位>0且DLM=0，则DLL寄存器的值必须大于等于3
+  LPC_UART->LCR=0x03;//禁止对除数锁存器访问，即00000011，DLAB=0
+  LPC_UART->IER=0x01;//设置UART中断使能寄存器
+  LPC_UART->FCR=0x81;//使能FIFO 收满1字节中断
+  NVIC_EnableIRQ(UART_IRQn);//使能UART中断
+}
+void UART_SendBytes(void)  //发送数据
+{
+  int a;
+  if(data[0]==0xAA){  //如果是AA则发送55
+  LPC_UART->THR=test; //测试数据可更改
+}
+  else{
+  for(a=4;a>0;a--){//如果不是AA则发送error
+  LPC_UART->THR=wro[a];
+  }
+   while((LPC_UART->LSR&0x40)==0);//等待发送完毕
+}
+void UART_IRQHandler(void)
+{
+  if(i==8)  i=0;
+  switch(LPC_UART->IIR&0x0f)
+  {
+  case 0x04:  //RDA
+  for(;i<8;i++){
+  data[1]=LPC_UART->RBR;//读取数据保存到data中
+  }
+  UART_SendBytes();
+  break;
+  case 0x0c:   //CTI
+  while((LPC_UART->LSR&0x01)==1){
+   data[i++]=LPC_UART->RBR;//读取数据
+  }
+  UART_SendBytes();
+  break;
+  default:
+  break;
+  }
+}
+/*----------------------------------------------------------------------------
+  MAIN function
+*----------------------------------------------------------------------------*/
+int main (void) {   /* Main Program */
+  UART_init();
+  while(1);
+}
+ 
+ 
+第二题程序
+#include"lpc11xx.h"
+int i=0;
+int sen=0;
+int rec=0;
+uint16_t sendbuf[8];
+uint16_t recvbuf[8];
+void UART_init(void)
+{
+LPC_SYSCON->SYSAHBCLKCTRL|=((1UL<<6)|(1UL<<16));//使能IOCON时钟：SYSAHBCLKCTRL寄存器的16位为IO配置块时钟使能位
+  LPC_IOCON->PIO1_6=(1UL<<0);//IOCON->PIO1_6寄存器的2:0位为001则将P1.6设置为RXD
+  LPC_IOCON->PIO1_7=(1UL<<0); //IOCON->PIO1_7寄存器的2:0位为001则将P1.7设置为TXD
+  LPC_SYSCON->SYSAHBCLKCTRL|=(1UL<<12);//使能UART时钟
+  LPC_SYSCON->UARTCLKDIV=(4UL<<0);//时钟分频值为4：，则时钟为12MHZ 波特率=【12000000/（16*4）】*【8/（8+5）】=11538
+  LPC_UART->LCR=0x83;//UART线控制寄存器，0x83对应10000011  故8位传输，1个停止位，无奇偶校验，使能对除数锁存器的访问
+  LPC_UART->DLL=4;//写除数锁存器低位值
+  LPC_UART->FDR=0x85;//1000 0101 8，5 FR=0.615
+  LPC_UART->DLM=0;//写除数锁存器高位值,如果该寄存器前四位>0且DLM=0，则DLL寄存器的值必须大于等于3
+  LPC_UART->LCR=0x03;//禁止对除数锁存器访问，即00000011，DLAB=0
+  LPC_UART->IER=0x01;//设置UART中断使能寄存器
+  LPC_UART->FCR=0x81;//使能FIFO 收满1字节中断
+  NVIC_EnableIRQ(UART_IRQn);//使能UART中断
+}
+void UART_SendBytes(void)//发送数据
+{
+  for(rec=0;rec<8;rec++)
+  {
+  sendbuf[rec]=recvbuf[rec];  //把接受数据存到发送数据数组
+  }
+  for(sen=0;sen<8;sen++){  //依次发送
+  LPC_UART->THR=sendbuf[sen];
+  while((LPC_UART->LSR&0x40)==0);  //等待发送完毕
+  }
+}
+void UART_IRQHandler(void)
+{switch(LPC_UART->IIR&0x0f)
+  {
+  case 0x04:  //发生RDA中断 
+recvbuf[i++]=LPC_UART->RBR;  // 从RBR读取数据
+  
+  if(i==8) {
+   UART_SendBytes();
+   i=0;
+  }
+  break;
+  case 0x0c:   //发生字符超时中断  
+  while((LPC_UART->LSR&0x01)==1){
+ recvbuf[i++]=LPC_UART->RBR;  //从RBR读取数据
+  }
+  if(i==8) {
+   UART_SendBytes();  //收集满8个字符则发送
+  i=0;
+  }
+  break;
+  default:
+  break;
+  }
+}
+ 
+/*----------------------------------------------------------------------------
+  MAIN function
+ *----------------------------------------------------------------------------*/
+ 
+int main (void) {   /* Main Program */
+  UART_init();
+  while(1);
+}

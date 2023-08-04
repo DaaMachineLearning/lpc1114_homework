@@ -1,0 +1,112 @@
+1.立即睡眠
+程序：
+#include <LPC11xx.h>
+ 
+void Led_init(){
+    LPC_SYSCON->SYSAHBCLKCTRL |= (1<<6); // 使能时钟 
+    LPC_GPIO1->DIR |= (1<<9);//给高电平
+ 
+}
+ 
+void LED_Toggle(void) {
+        LPC_GPIO1->DATA  ^=  (1UL <<9); /* 翻转LED */
+}
+ 
+void SysTick_Handler(void){
+       static unsigned long ticks=0;//进入中断的次数
+       if(ticks==10){//计时10个数
+                LED_Toggle();//将接口取反
+              ticks=0;
+         }
+          ticks++;
+}
+ 
+int main(){
+ /
+     SystemInit();//  主时钟设置成48Mhz      
+    Led_init();
+    SysTick_Config(SystemCoreClock/10);  //计时器计时100ms
+    __WFI();
+    while(1){
+    }
+}
+现象：LED正常闪烁
+ 利用定时器中断可以唤醒睡眠模式，当SLEEPONEXIT为0时，程序调用WFI命令，同时系统会立马进入睡眠模式。
+ 在睡眠模式中，因为systick为外设，有自己的时钟所以仍然可以运行，在这里如果有中断出现，则处理中断函数。在中断函数结束后，程序这个时候将进入线程模式中，开始执行WFI后面的代码。
+系统节拍定时器能唤醒睡眠模式
+2.退出时睡眠
+#include <LPC11xx.h>
+ 
+void Led_init(){
+    LPC_SYSCON->SYSAHBCLKCTRL |= (1<<6); // 使能时钟 
+    LPC_GPIO1->DIR |= (1<<9);//给高电平
+ 
+}
+ 
+void LED_Toggle(void) {
+        LPC_GPIO1->DATA  ^=  (1UL <<9); /* Toggle the  BLINKY LED */
+}
+ 
+void SysTick_Handler(void){
+       static unsigned long ticks=0;//进入中断的次数
+       if(ticks==10){//计时10个数
+                LED_Toggle();//将接口取反
+              ticks=0;
+         }
+          ticks++;
+         
+}
+ 
+ 
+int main(){
+ 
+     SystemInit();//  主时钟设置成48Mhz      
+    Led_init();
+    SysTick_Config(SystemCoreClock/10);  //计时器计时100ms
+ 
+    SCB->SCR |=(1<<1);  //退出时睡眠
+  //SCB->SCR |=SCB_SCR_SLEEPONEXIT_Msk;
+    __WFI();
+    while(1){
+         
+    }
+}
+现象：小灯正常闪烁
+进入睡眠，外设仍然继续运行，利用系统节拍定时器中断唤醒睡眠模式，当SLEEPONEXIT为1时，程序调用WFI命令，系统会进入睡眠模式。
+ 在睡眠模式中，如果有中断出现，则进入中断处理函数。 在中断函数结束后，由于SLEEPONEXIT=1 ,返回线程模式后进入睡眠模式程序这个时候将再次进入睡眠模式中。
+3.深度睡眠
+#include <LPC11xx.h>
+void Led_init(){
+    LPC_SYSCON->SYSAHBCLKCTRL |= (1<<6); // 使能时钟 
+    LPC_GPIO1->DIR |= (1<<9);//给高电平
+ 
+}
+void LED_Toggle(void) {
+        LPC_GPIO1->DATA  ^=  (1UL <<9); /* Toggle the  BLINKY LED */
+}
+ 
+void SysTick_Handler(void){
+       static unsigned long ticks=0;//进入中断的次数
+       if(ticks==10){//计时10个数
+                LED_Toggle();//将接口取反
+              ticks=0;
+         }
+          ticks++;
+         
+}
+int main(){
+     SystemInit();//  主时钟设置成48Mhz      
+    Led_init();
+    
+    SysTick_Config(SystemCoreClock/100);  //计时器计时100ms
+ 
+    SCB->SCR |=(1<<2); //设置深度睡眠   
+    SCB->SCR |=(1<<1);  //退出时 深度睡眠
+  //SCB->SCR |=SCB_SCR_SLEEPONEXIT_Msk;
+    __WFI();
+    while(1){
+    
+    }
+}
+现象：LED灯不亮
+系统 SLEEPDEEP=1 系统在调用WFI后将进入深度睡眠模式。进入深度睡眠模式后，中断程序无法唤醒CPU，故LED不亮。
